@@ -1,0 +1,73 @@
+【チートやセキュリティに関して】
+※1 基本的にパラメータは全部操作されると思った方がいいです
+　（気を付けてても結構漏れますが…
+※2 MySQLのプレースホルダ等に関してはデフォルトで使用してると信じてます…
+※3 だいたい誰かしらがやらかした失敗談的な感じになってますがご了承ください
+
+・負の数を入れるとアイテム増殖
+	$num = $_REQUEST['useNum']; // useNum = -10;
+	public function use( $num ) {
+		// 所持数以上の数は使用できない
+		if( $num > $uItemNum ) {
+			return false;
+		}
+		// 消費処理
+		$sql = "UPDATE user_item SET num = num - $num WHERE user_id = $uId";
+		$dbh->prepare( $sql );
+	}
+　パラメータで受け取った値をそのまま減算していたせいで、アイテムを無限に量産されました…
+
+・極めて0に近い数を入力で減算されない
+	$num = 0.000000001;
+	for( $i = 0; $i < $num; $i++ ) {
+		$this->use( $subNum = 1 );
+	}
+　複数使用すると、使用した回数分効果を発生する処理として記述したんだと思いますが
+　実際に流れるクエリとして
+　UPDATE user_item SET num = num - 0.000000001;
+　といった感じ極小の値を入れると、切り捨てされて消費処理が正常に動作せず
+　アイテム効果だけが発生するといったことがありました…
+
+・プレースホルダを使用せず、ID-PASSが抜かれそうな事態に（無事でしたが）
+	$uIds = $_REQUEST['uIds'];
+	$sql = "UPDATE table SET column = ? WHERE u_id IN (".implode(',', $uIds).")";
+	$dbh->prepare( $sql );
+　一度のクエリで複数のレコードを更新しようとした際に、リクエストされた情報を直接クエリに流していたため
+　$uIds部分に入れる文字列次第では、IDやPASSまで抜かれかねない状況になっていました
+　取得したパラメータは必ずバリデーションを通したうえでプレースホルダで置換が安全です
+
+・ボタン連打で複数回消費処理
+	$itemId = $_REQUEST['itemId'];
+	$this->use( $itemId );
+　これでも動くは動くのですが、複数回同一のアクセスがあった際に消費処理が実行されるので
+　「回復アイテム使ったら3つも減った！」とか問い合わせがくる原因になりやすいです。
+	$itemId    = $_REQUEST['itemId'];
+	$beforeNum = $_REQUEST['before'];
+	$useNum    = $_REQUEST['useNum'];
+	$this->use( $itemId, $beforeNum, $useNum );
+　といった感じに、何個の状態から何個消費するといった処理にしてあげると
+　更新系のクエリで
+	$sql = "UPDATE user_item SET num = num - $useNum WHERE num = $beforeNum ";
+	$result = $dbh->prepare( $sql );
+	if( !$result ) {
+		$dbh->rollback();
+	}
+　WHERE句に条件を加えることで、当てはまらない場合は更新されないようにできます。
+　※rollbackやエラーハンドリング間違えると無限にアイテム使用出来る原因になりやすいです。
+
+【あると便利なもの】
+・mk-query-digest
+　http://linux.die.net/man/1/mk-query-digest
+　http://mikeda.hatenablog.com/entry/20111204/1322980203
+　cronに仕込んでおけば定期的に本番環境で流れているクエリのEXPLAINを確認できるので
+　DB関連でボトルネックになっている部分を特定しやすいです
+
+・ペナルティ機能
+　言わずもがなですが、いろいろRMTや不正しようとするユーザーも多いので…
+
+・特定ユーザーのレスポンス情報を記録できる機能
+　ユーザーの指定にワイルドカード使えるようにとか、その辺の拡張は後回しでもいいですが
+　対象ユーザーの特定コントローラーのレスポンスを任意でDBに記録できる仕組みを作っておくと
+　※アプリみたいなAPI形式だと便利だけど、ブラウザだと需要は少ないかも…
+
+・
